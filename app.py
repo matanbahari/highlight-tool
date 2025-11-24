@@ -1,20 +1,3 @@
-import subprocess
-import sys
-
-# --- פונקציה להתקנת חבילות ---
-def install(package):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-
-# --- רשימת חבילות דרושות ---
-required_packages = ["streamlit", "pillow", "requests", "python-docx", "openai"]
-
-for pkg in required_packages:
-    try:
-        __import__(pkg.replace("-", "_"))
-    except ImportError:
-        install(pkg)
-
-# --- עכשיו כל החבילות זמינות ---
 import streamlit as st
 from PIL import Image
 import requests
