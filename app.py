@@ -30,7 +30,7 @@ def search_series_info(series_name):
     return {"name": series_name, "overview": "לא נמצא מידע", "first_air_date": "", "episodes": ""}
 
 def generate_summary(text):
-    prompt = f"צור תקציר קצר בעברית עבור הטקסט הבא"
+    prompt = f"צור תקציר קצר בעברית עבור הטקסט הבא
 {text}"
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
