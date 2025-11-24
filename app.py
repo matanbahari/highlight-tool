@@ -1,187 +1,124 @@
-
 import streamlit as st
-try:
-    from PIL import Image
-except Exception as e:
-    raise ImportError("Pillow לא מותקן. הוסף 'pillow' ל-requirements.txt") from e
+from PIL import Image
+import requests
+from docx import Document
+from docx.shared import Pt, RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import io
+import openai
+import base64
+import re
 
-try:
-    import pytesseract
-except Exception as e:
-    raise ImportError("pytesseract לא מותקן. הוסף 'pytesseract' ל-requirements.txt. שים לב: צריך גם את הבינארי של Tesseract במערכת.") from e
+OCR_KEY = st.secrets.get("OCR_API_KEY")
+TMDB_KEY = st.secrets.get("TMDB_API_KEY")
+openai.api_key = st.secrets.get("OPENAI_API_KEY")
 
-try:
-    import requests
-except Exception as e:
-    raise ImportError("requests לא מותקן. הוסף 'requests' ל-requirements.txt") from e
-
-try:
-    from docx import Document
-    from docx.shared import Pt, RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-except Exception as e:
-    raise ImportError("python-docx לא מותקן. הוסף 'python-docx' ל-requirements.txt") from e
-
-try:
-    import openai
-except Exception as e:
-    raise ImportError("openai לא מותקן. הוסף 'openai' ל-requirements.txt") from e
-
-import io, re
-
-# =========== הגדרות ===========
 st.set_page_config(page_title="היילייטס סדרות", page_icon="📺", layout="wide")
 
-# Secrets
-try:
-    TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
-except Exception:
-    TMDB_API_KEY = None
-
-try:
-    openai.api_key = st.secrets["OPENAI_API_KEY"]
-except Exception:
-    openai.api_key = None
-
-# ---------- פונקציות ----------
-def clean_text(text: str) -> str:
-    if not text:
-        return ""
-    text = text.replace("\\n", " ").strip()
-    text = re.sub(r"[^a-zA-Z0-9א-ת \\-]", "", text)
-    return text
-
-def extract_text_from_image(image: Image.Image) -> str:
-    # אם המשתמש רוצה להשתמש ב-TESSERACT_CMD ספציפי ניתן להגדיר אותו ב-Secrets כ-TESSERACT_CMD
-    tcmd = st.secrets.get("TESSERACT_CMD") if hasattr(st, "secrets") else None
-    if tcmd:
-        pytesseract.pytesseract.tesseract_cmd = tcmd
+def extract_text_from_image(image):
+    buffered = io.BytesIO()
+    image.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode()
+    payload = {
+        "base64Image": "data:image/png;base64," + img_base64,
+        "language": "eng,heb",
+        "apikey": OCR_KEY,
+        "isOverlayRequired": False
+    }
     try:
-        raw = pytesseract.image_to_string(image, lang='heb+eng')
-    except Exception as e:
-        st.error("אירעה שגיאה בעת קריאה ל-pytesseract. ודא ש-Tesseract מותקן במערכת או הגדר TESSERACT_CMD ב-Secrets.")
+        r = requests.post("https://api.ocr.space/parse/image", data=payload)
+        result = r.json()
+        return result["ParsedResults"][0]["ParsedText"].strip()
+    except:
         return ""
-    return clean_text(raw)
 
-def search_series_info(series_name: str) -> dict:
-    if not TMDB_API_KEY:
-        return {"name": series_name, "overview": "TMDB API key לא מוגדר ב-Secrets", "first_air_date": "לא ידוע", "episodes": "לא ידוע"}
+def clean_text(t):
+    t = t.replace("\n", " ").strip()
+    return re.sub(r"[^a-zA-Z0-9א-ת ]", "", t)
+
+def search_series_info(series_name):
+    if not TMDB_KEY:
+        return {"name": series_name, "overview": "TMDB API key חסר", "first_air_date": "לא ידוע", "episodes": "לא ידוע"}
     try:
-        url = f"https://api.themoviedb.org/3/search/tv?api_key={TMDB_API_KEY}&query={series_name}"
-        resp = requests.get(url, timeout=10)
-        data = resp.json()
+        url = f"https://api.themoviedb.org/3/search/tv?api_key={TMDB_KEY}&query={series_name}"
+        r = requests.get(url)
+        data = r.json()
         if not data.get("results"):
             return {"name": series_name, "overview": "לא נמצא מידע", "first_air_date": "לא ידוע", "episodes": "לא ידוע"}
-        series = data["results"][0]
+        s = data["results"][0]
         return {
-            "name": series.get("name", series_name),
-            "overview": series.get("overview", "לא נמצא תקציר"),
-            "first_air_date": series.get("first_air_date", "לא ידוע"),
-            "episodes": series.get("number_of_episodes", "לא ידוע")
+            "name": s.get("name", series_name),
+            "overview": s.get("overview", "אין תקציר"),
+            "first_air_date": s.get("first_air_date", "לא ידוע"),
+            "episodes": s.get("number_of_episodes", "לא ידוע")
         }
-    except Exception as e:
-        return {"name": series_name, "overview": "שגיאה בשליפת המידע", "first_air_date": "לא ידוע", "episodes": "לא ידוע"}
+    except:
+        return {"name": series_name, "overview": "שגיאת API", "first_air_date": "לא ידוע", "episodes": "לא ידוע"}
 
-def generate_summary(text: str) -> str:
+def generate_summary(text):
     if not openai.api_key:
-        return "OpenAI API key לא מוגדר ב-Secrets"
-    if not text:
-        return "אין טקסט לסיכום"
+        return "חסר מפתח OpenAI"
     try:
-        resp = openai.ChatCompletion.create(
+        r = openai.ChatCompletion.create(
             model="gpt-4o-mini",
             messages=[
-                {"role": "system", "content": "אתה מסכם טקסטים בעברית בקצרה ובבהירות."},
-                {"role": "user", "content": f"צור תקציר קצר בעברית לטקסט הבא:\\n{text}"}
-            ],
-            max_tokens=200,
-            temperature=0.2
+                {"role": "system", "content": "סכם טקסטים בעברית."},
+                {"role": "user", "content": f"צור תקציר בעברית:\n{text}"}
+            ]
         )
-        return resp["choices"][0]["message"]["content"].strip()
-    except Exception as e:
-        return "שגיאה ביצירת תקציר עם OpenAI"
+        return r["choices"][0]["message"]["content"]
+    except:
+        return "שגיאה ביצירת תקציר"
 
-def create_highlights_doc(series_list: list) -> io.BytesIO:
+def create_doc(series_list):
     doc = Document()
     title = doc.add_paragraph("היילייטס סדרות", style="Title")
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
     for s in series_list:
-        doc.add_paragraph(s.get("name", ""), style="Heading 1")
-        p_date = doc.add_paragraph(f"תאריך עלייה: {s.get('first_air_date','')}")
-        p_date.runs[0].font.size = Pt(12)
-        p_date.runs[0].font.color.rgb = RGBColor(0, 0, 128)
-        doc.add_paragraph(f"מספר פרקים: {s.get('episodes','')}")
+        doc.add_paragraph(s["name"], style="Heading 1")
+        p = doc.add_paragraph(f"תאריך עלייה: {s['first_air_date']}")
+        p.runs[0].font.color.rgb = RGBColor(0,0,128)
+        doc.add_paragraph(f"מספר פרקים: {s['episodes']}")
         doc.add_paragraph("תקציר:", style="Heading 2")
-        doc.add_paragraph(s.get("summary",""))
+        doc.add_paragraph(s["summary"])
         doc.add_paragraph("----------------------------------------")
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+    return buffer
 
-    buf = io.BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-    return buf
+st.title("📺 היילייטס סדרות – ללא Tesseract")
+uploaded = st.file_uploader("העלה תמונות", type=["jpg","jpeg","png"], accept_multiple_files=True)
 
-# =========== ממשק ===========
-st.title("📺 כלי ליצירת היילייטס סדרות (מתוקן)")
-st.write("העלה תמונות, ערוך את שם הסדרה שנחלץ במידת הצורך, וייצא Word.")
-
-with st.sidebar:
-    st.header("הגדרות")
-    st.write("בדוק ש-Secrets כוללים: TMDB_API_KEY, OPENAI_API_KEY (אם רוצים תקצירים).")
-    tess = st.text_input("Tesseract cmd (אם צריך)", value=st.secrets.get("TESSERACT_CMD","") if hasattr(st, "secrets") else "")
-    if tess and "TESSERACT_CMD" not in st.secrets:
-        st.info("כדי לשמור קבוע, הוסף את 'TESSERACT_CMD' ב-Secrets של האפליקציה במקום להקליד כאן.")
-
-uploaded = st.file_uploader("בחר תמונות", type=["jpg","jpeg","png"], accept_multiple_files=True)
-if not uploaded:
-    st.info("העלה תמונה עם טקסט (צילום מסך של שם הסדרה או פוסטר עם טקסט).")
-else:
+if uploaded:
     series_list = []
-    for f in uploaded:
+    for img in uploaded:
         st.markdown("---")
-        cols = st.columns([1,2])
-        with cols[0]:
-            st.image(f, use_column_width=True, caption=f.name)
-        with cols[1]:
-            img = Image.open(f)
-            with st.spinner("מפעיל OCR..."):
-                extracted = extract_text_from_image(img)
-            st.write("**טקסט שחולץ:**")
-            st.write(extracted or "_לא זוהה טקסט_")
-
-            # אפשרות לעריכה ידנית
-            edited_name = st.text_input(f"ערוך שם סדרה (בעבור {f.name}):", value=extracted, key=f"name_{f.name}")
-            if not edited_name:
-                st.warning("לא הוזן שם -- לדלג על קובץ זה")
+        col1, col2 = st.columns([1,2])
+        with col1:
+            st.image(img, caption=img.name, use_column_width=True)
+        with col2:
+            with st.spinner("📤 מבצע OCR..."):
+                text = extract_text_from_image(Image.open(img))
+            cleaned = clean_text(text)
+            st.write("טקסט שחולץ:", cleaned)
+            if not cleaned:
+                st.warning("לא נמצא טקסט.")
                 continue
-
-            # חפש ב-TMDB
-            with st.spinner("מחפש TMDB..."):
-                info = search_series_info(edited_name)
-
-            # אפשר לערוך תקציר ידנית לפני שליחה ל-AI
-            st.write("תקציר שנמצא ב-TMDB (ניתן לעריכה):")
-            overview_edit = st.text_area(f"overview_{f.name}", value=info.get("overview",""), height=120)
-
-            # כפתור לבקשת סיכום AI
-            if st.button(f"ייצר תקציר AI עבור {f.name}", key=f"summarize_{f.name}"):
-                with st.spinner("מייצר תקציר..."):
-                    ai_summary = generate_summary(overview_edit)
-                    st.success("התקציר נוצר")
-                    st.write(ai_summary)
-            else:
-                ai_summary = overview_edit if overview_edit else "אין תקציר"
-
-            st.write("----")
-            st.write("סיכום סופי שיוכנס לקובץ:")
-            st.write(ai_summary)
-
-            info["summary"] = ai_summary
-            info["name"] = edited_name
+            with st.spinner("🔍 מחפש מידע..."):
+                info = search_series_info(cleaned)
+            with st.spinner("🤖 מייצר תקציר..."):
+                summary = generate_summary(info["overview"])
+            info["summary"] = summary
             series_list.append(info)
-
+            st.success(f"🎬 {info['name']}")
+            st.write(summary)
     if series_list:
-        st.markdown("---")
-        st.success("הכנת דוח להורדה")
-        buf = create_highlights_doc(series_list)
-        st.download_button("📥 הורד Word", data=buf, file_name="highlights.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        doc = create_doc(series_list)
+        st.download_button(
+            "📥 הורד Word",
+            data=doc,
+            file_name="highlights.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            use_container_width=True
+        )
