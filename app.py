@@ -8,16 +8,12 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 import io
 import openai
 
-# הגדרות API
-TMDB_API_KEY = "YOUR_TMDB_API_KEY"  # יש להכניס מפתח אמיתי
-openai.api_key = "YOUR_OPENAI_API_KEY"  # יש להכניס מפתח אמיתי
-
-# פונקציה לחילוץ טקסט מתמונה
+# שימוש ב-Secrets
+TMDB_API_KEY = st.secrets["TMDB_API_KEY"]
+openai.api_key = st.secrets["OPENAI_API_KEY"]
 
 def extract_text_from_image(image):
     return pytesseract.image_to_string(image, lang='heb+eng').strip()
-
-# פונקציה לחיפוש מידע על סדרה ב-TMDb
 
 def search_series_info(series_name):
     url = f"https://api.themoviedb.org/3/search/tv?api_key={TMDB_API_KEY}&query={series_name}"
@@ -33,23 +29,20 @@ def search_series_info(series_name):
         }
     return {"name": series_name, "overview": "לא נמצא מידע", "first_air_date": "", "episodes": ""}
 
-# פונקציה ליצירת תקציר אוטומטי עם GPT
-
 def generate_summary(text):
     prompt = f"צור תקציר קצר בעברית עבור הטקסט הבא:
 {text}"
     response = openai.ChatCompletion.create(
         model="gpt-3.5-turbo",
-        messages=[{"role": "system", "content": "אתה מסכם טקסטים בעברית."}, {"role": "user", "content": prompt}]
+        messages=[
+            {"role": "system", "content": "אתה מסכם טקסטים בעברית."},
+            {"role": "user", "content": prompt}
+        ]
     )
     return response['choices'][0]['message']['content']
 
-# פונקציה ליצירת קובץ Word עם עיצוב מתקדם
-
 def create_highlights_doc(series_list):
-    doc = Document("/app/scripts/word_blank.docx")
-
-    # כותרת ראשית
+    doc = Document()
     title = doc.add_paragraph("היילייטס סדרות", style="Title")
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
@@ -58,21 +51,16 @@ def create_highlights_doc(series_list):
         p_date = doc.add_paragraph(f"תאריך עלייה: {series_info['first_air_date']}")
         p_date.runs[0].font.size = Pt(12)
         p_date.runs[0].font.color.rgb = RGBColor(0, 0, 128)
-
         doc.add_paragraph(f"מספר פרקים: {series_info['episodes']}")
-
         doc.add_paragraph("תקציר:", style="Heading 2")
         doc.add_paragraph(series_info['summary'], style="Normal")
-
-        # קו מפריד
-        doc.add_paragraph("--------------------------------------")
+        doc.add_paragraph("----------------------------------------")
 
     buffer = io.BytesIO()
     doc.save(buffer)
     buffer.seek(0)
     return buffer
 
-# ממשק Streamlit
 st.title("📺 כלי ליצירת היילייטס סדרות")
 st.write("העלה תמונות עם פרטי הסדרות וקבל קובץ Word עם ההיילייטס")
 
@@ -85,7 +73,6 @@ if uploaded_images:
         st.image(image, caption=f"תמונה: {uploaded_image.name}", use_column_width=True)
         extracted_text = extract_text_from_image(image)
         st.write(f"**טקסט שחולץ:** {extracted_text}")
-
         if extracted_text:
             series_info = search_series_info(extracted_text)
             summary = generate_summary(series_info['overview'])
