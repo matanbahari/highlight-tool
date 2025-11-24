@@ -1,65 +1,39 @@
+import subprocess
+import sys
+
+# --- פונקציה להתקנת חבילות ---
+def install(package):
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+
+# --- רשימת חבילות דרושות ---
+required_packages = ["streamlit", "pillow", "requests", "python-docx", "openai"]
+
+for pkg in required_packages:
+    try:
+        __import__(pkg.replace("-", "_"))
+    except ImportError:
+        install(pkg)
+
+# --- עכשיו כל החבילות זמינות ---
 import streamlit as st
-import base64
+from PIL import Image
+import requests
+from docx import Document
+from docx.shared import RGBColor
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 import io
+import base64
 import re
+import openai
 
-missing = []
-
-# Defensive imports
-try:
-    from PIL import Image
-except:
-    Image = None
-    missing.append("Pillow")
-
-try:
-    import requests
-except:
-    requests = None
-    missing.append("requests")
-
-try:
-    from docx import Document
-    from docx.shared import RGBColor
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-except:
-    Document = None
-    RGBColor = None
-    WD_ALIGN_PARAGRAPH = None
-    missing.append("python-docx")
-
-try:
-    import openai
-except:
-    openai = None
-    missing.append("openai")
-
-# UI setup
-st.set_page_config(page_title="Highlight Tool", page_icon="📺")
-st.title("📺 אפליקציית היילייטס – Debug Safe Mode")
-
-# Missing modules
-if missing:
-    st.error("""מודולים חסרים ולכן האפליקציה לא יכולה לרוץ:""")
-    for m in missing:
-        st.write(f"- {m}")
-    st.write("""שים בקובץ requirements.txt:""")
-    st.code("""streamlit
-pillow
-requests
-python-docx
-openai""")
-    st.stop()
-
-# Secrets
+# --- Secrets ---
 OCR_KEY = st.secrets.get("OCR_API_KEY")
 TMDB_KEY = st.secrets.get("TMDB_API_KEY")
 OPENAI_KEY = st.secrets.get("OPENAI_API_KEY")
-
 if openai:
     openai.api_key = OPENAI_KEY
 
-# --- Functions ---
+# --- פונקציות ---
 def extract_text_from_image(image):
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -81,37 +55,17 @@ def clean_text(t):
 
 def search_series_info(name):
     if not TMDB_KEY:
-        return {
-            "name": name,
-            "overview": """אין מפתח TMDB""",
-            "first_air_date": """לא ידוע""",
-            "episodes": """לא ידוע"""
-        }
+        return {"name": name, "overview": """אין מפתח TMDB""", "first_air_date": """לא ידוע""", "episodes": """לא ידוע"""}
     try:
         url = f"https://api.themoviedb.org/3/search/tv?api_key={TMDB_KEY}&query={name}"
         r = requests.get(url)
         data = r.json()
         if not data.get("results"):
-            return {
-                "name": name,
-                "overview": """לא נמצא מידע""",
-                "first_air_date": """לא ידוע""",
-                "episodes": """לא ידוע"""
-            }
+            return {"name": name, "overview": """לא נמצא מידע""", "first_air_date": """לא ידוע""", "episodes": """לא ידוע"""}
         s = data["results"][0]
-        return {
-            "name": s.get("name", name),
-            "overview": s.get("overview", """אין תקציר"""),
-            "first_air_date": s.get("first_air_date", """לא ידוע"""),
-            "episodes": s.get("number_of_episodes", """לא ידוע""")
-        }
+        return {"name": s.get("name", name), "overview": s.get("overview", """אין תקציר"""), "first_air_date": s.get("first_air_date", """לא ידוע"""), "episodes": s.get("number_of_episodes", """לא ידוע""")}
     except:
-        return {
-            "name": name,
-            "overview": """שגיאת API""",
-            "first_air_date": """לא ידוע""",
-            "episodes": """לא ידוע"""
-        }
+        return {"name": name, "overview": """שגיאת API""", "first_air_date": """לא ידוע""", "episodes": """לא ידוע"""}
 
 def generate_summary(text):
     if not OPENAI_KEY:
@@ -147,6 +101,9 @@ def create_doc(series_list):
     return buf
 
 # --- UI ---
+st.set_page_config(page_title="Highlight Tool", page_icon="📺")
+st.title("📺 כלי ליצירת היילייטס סדרות")
+
 uploaded = st.file_uploader("""העלה תמונות""", type=["jpg","jpeg","png"], accept_multiple_files=True)
 
 if uploaded:
